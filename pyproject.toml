@@ -1,9 +1,40 @@
 [project]
-name = "momento"
+name = "momento-memory"
 version = "0.1.0"
-description = "Add your description here"
+description = "Enhanced memory system for AI-assisted software engineering with entry preservation, semantic search, and project context"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = [
-    "mcp-neo4j-memory>=0.4.1",
+    "fastmcp>=2.0.0",
+    "neo4j>=5.26.0",
+    "pydantic>=2.10.1",
+    "python-dotenv>=1.0.0",
+    "starlette>=0.28.0",
+    "sentence-transformers>=2.2.0",
+    "numpy>=1.24.0",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pyright>=1.1.389",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.25.3",
+    "testcontainers[neo4j]>=4.10.0",
+    "aiohttp>=3.8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+momento = "momento_memory:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.pyright]
+include = ["src"]
+exclude = ["**/__pycache__"]
+pythonVersion = "3.10"
