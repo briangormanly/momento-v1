@@ -16,14 +16,15 @@ cd infra
 docker-compose up -d
 
 # Install package
-pip install -e .
+cd ..
+pip install -e .   # or: uv sync
 
 # Configure environment (optional but recommended)
 cp .env.example .env
 # Edit .env with your Neo4j connection details
 
 # Run MCP server (uses .env file automatically)
-momento
+momento   # or with uv: uv run momento
 ```
 
 Alternatively, you can specify connection details via command line arguments:
@@ -54,10 +55,16 @@ The easiest way to manage configuration is using a `.env` file:
 
 3. Run the server - it will automatically load the `.env` file:
    ```bash
+   # If installed with pip install -e .
    momento
+   
+   # If installed with uv sync
+   uv run momento
    ```
 
 All configuration options can be set in `.env` or via command-line arguments. See `.env.example` for all available options.
+
+**Note:** If you installed the package with `uv sync`, use `uv run momento` instead of just `momento`. The `uv run` command ensures the script runs in the correct virtual environment managed by uv.
 
 ### With Claude Desktop
 
@@ -68,6 +75,18 @@ When using `.env` file, Claude Desktop configuration is simple:
   "mcpServers": {
     "momento": {
       "command": "momento"
+    }
+  }
+}
+```
+
+**Note for uv users:** If you installed with `uv sync`, use `uv run` as the command:
+```json
+{
+  "mcpServers": {
+    "momento": {
+      "command": "uv",
+      "args": ["run", "momento"]
     }
   }
 }
