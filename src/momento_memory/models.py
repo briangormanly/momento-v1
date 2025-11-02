@@ -136,8 +136,8 @@ class Entry(BaseModel):
         default=None,
         description="ID of associated project, if any"
     )
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict,
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
         description="Additional metadata (tags, mood, etc.)"
     )
 
@@ -177,8 +177,8 @@ class Project(BaseModel):
         description="Project status: active, archived, completed",
         examples=["active", "archived", "completed"]
     )
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict,
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
         description="Additional project metadata"
     )
 
@@ -239,7 +239,7 @@ class CreateEntryRequest(BaseModel):
         default=True,
         description="Whether to automatically extract entities"
     )
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Optional[Dict[str, Any]] = Field(default=None)
 
 
 class SemanticSearchRequest(BaseModel):

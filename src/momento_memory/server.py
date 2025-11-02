@@ -65,7 +65,7 @@ def create_mcp_server(memory: MomentoMemory) -> FastMCP:
         entry_type: str = Field(default="journal", description="Type: journal, code_comment, meeting, task, note"),
         project_id: Optional[str] = Field(None, description="ID of associated project"),
         extract_entities: bool = Field(True, description="Whether to extract entities automatically"),
-        metadata: dict = Field(default_factory=dict, description="Additional metadata")
+        metadata: Optional[dict] = Field(None, description="Additional metadata")
     ) -> ToolResult:
         """Create a new entry with automatic entity extraction and embedding generation.
         
@@ -232,7 +232,7 @@ def create_mcp_server(memory: MomentoMemory) -> FastMCP:
         name: str = Field(..., description="Human-readable project name"),
         description: str = Field("", description="Project description"),
         status: str = Field("active", description="Status: active, archived, completed"),
-        metadata: dict = Field(default_factory=dict, description="Additional metadata")
+        metadata: Optional[dict] = Field(None, description="Additional metadata")
     ) -> ToolResult:
         """Create a new project context.
         

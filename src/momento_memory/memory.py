@@ -149,26 +149,24 @@ class MomentoMemory:
             embedding=embedding,
             type=entry_type,
             project_id=project_id,
-            metadata=metadata or {}
+            metadata=metadata if metadata else None
         )
         
-        # Store entry in database
-        query = """
-        CREATE (e:Entry {
-            id: $id,
-            content: $content,
-            embedding: $embedding,
-            timestamp: datetime($timestamp),
-            type: $type,
-            project_id: $project_id,
-            metadata: $metadata
-        })
-        RETURN e
-        """
-        
-        await self.driver.execute_query(
-            query,
-            {
+        # Store entry in database - only set metadata if it's not None/empty
+        if entry.metadata:
+            query = """
+            CREATE (e:Entry {
+                id: $id,
+                content: $content,
+                embedding: $embedding,
+                timestamp: datetime($timestamp),
+                type: $type,
+                project_id: $project_id,
+                metadata: $metadata
+            })
+            RETURN e
+            """
+            params = {
                 "id": str(entry.id),
                 "content": entry.content,
                 "embedding": entry.embedding,
@@ -176,7 +174,31 @@ class MomentoMemory:
                 "type": entry.type,
                 "project_id": entry.project_id,
                 "metadata": entry.metadata
-            },
+            }
+        else:
+            query = """
+            CREATE (e:Entry {
+                id: $id,
+                content: $content,
+                embedding: $embedding,
+                timestamp: datetime($timestamp),
+                type: $type,
+                project_id: $project_id
+            })
+            RETURN e
+            """
+            params = {
+                "id": str(entry.id),
+                "content": entry.content,
+                "embedding": entry.embedding,
+                "timestamp": entry.timestamp.isoformat(),
+                "type": entry.type,
+                "project_id": entry.project_id
+            }
+        
+        await self.driver.execute_query(
+            query,
+            params,
             routing_control=RoutingControl.WRITE
         )
         
@@ -320,11 +342,16 @@ class MomentoMemory:
             
             entries = []
             for record in result.records:
+                # Convert Neo4j DateTime to Python datetime
+                timestamp = record["timestamp"]
+                if hasattr(timestamp, 'to_native'):
+                    timestamp = timestamp.to_native()
+                
                 entries.append(Entry(
                     id=record["id"],
                     content=record["content"],
                     embedding=record["embedding"],
-                    timestamp=record["timestamp"],
+                    timestamp=timestamp,
                     type=record["type"],
                     project_id=record.get("project_id"),
                     metadata=record.get("metadata", {})
@@ -375,11 +402,16 @@ class MomentoMemory:
         
         entries = []
         for record in result.records:
+            # Convert Neo4j DateTime to Python datetime
+            timestamp = record["timestamp"]
+            if hasattr(timestamp, 'to_native'):
+                timestamp = timestamp.to_native()
+            
             entries.append(Entry(
                 id=record["id"],
                 content=record["content"],
                 embedding=record.get("embedding"),
-                timestamp=record["timestamp"],
+                timestamp=timestamp,
                 type=record["type"],
                 project_id=record.get("project_id"),
                 metadata=record.get("metadata", {})
@@ -416,11 +448,16 @@ class MomentoMemory:
         
         entries = []
         for record in result.records:
+            # Convert Neo4j DateTime to Python datetime
+            timestamp = record["timestamp"]
+            if hasattr(timestamp, 'to_native'):
+                timestamp = timestamp.to_native()
+            
             entries.append(Entry(
                 id=record["id"],
                 content=record["content"],
                 embedding=record.get("embedding"),
-                timestamp=record["timestamp"],
+                timestamp=timestamp,
                 type=record["type"],
                 project_id=record.get("project_id"),
                 metadata=record.get("metadata", {})
@@ -459,29 +496,48 @@ class MomentoMemory:
             name=name,
             description=description,
             status=status,
-            metadata=metadata or {}
+            metadata=metadata if metadata else None
         )
         
-        query = """
-        MERGE (p:Project {id: $id})
-        SET p.name = $name,
-            p.description = $description,
-            p.created = datetime($created),
-            p.status = $status,
-            p.metadata = $metadata
-        RETURN p
-        """
-        
-        await self.driver.execute_query(
-            query,
-            {
+        # Only set metadata if it's not None/empty
+        if project.metadata:
+            query = """
+            MERGE (p:Project {id: $id})
+            SET p.name = $name,
+                p.description = $description,
+                p.created = datetime($created),
+                p.status = $status,
+                p.metadata = $metadata
+            RETURN p
+            """
+            params = {
                 "id": project.id,
                 "name": project.name,
                 "description": project.description,
                 "created": project.created.isoformat(),
                 "status": project.status,
                 "metadata": project.metadata
-            },
+            }
+        else:
+            query = """
+            MERGE (p:Project {id: $id})
+            SET p.name = $name,
+                p.description = $description,
+                p.created = datetime($created),
+                p.status = $status
+            RETURN p
+            """
+            params = {
+                "id": project.id,
+                "name": project.name,
+                "description": project.description,
+                "created": project.created.isoformat(),
+                "status": project.status
+            }
+        
+        await self.driver.execute_query(
+            query,
+            params,
             routing_control=RoutingControl.WRITE
         )
         
@@ -518,11 +574,16 @@ class MomentoMemory:
             raise ValueError(f"Project not found: {project_id}")
         
         p = project_result.records[0]["p"]
+        # Convert Neo4j DateTime to Python datetime
+        created = p["created"]
+        if hasattr(created, 'to_native'):
+            created = created.to_native()
+        
         project = Project(
             id=p["id"],
             name=p["name"],
             description=p.get("description", ""),
-            created=p["created"],
+            created=created,
             status=p.get("status", "active"),
             metadata=p.get("metadata", {})
         )
@@ -546,18 +607,23 @@ class MomentoMemory:
             routing_control=RoutingControl.READ
         )
         
-        entries = [
-            Entry(
+        entries = []
+        for r in entries_result.records:
+            # Convert Neo4j DateTime to Python datetime
+            timestamp = r["timestamp"]
+            if hasattr(timestamp, 'to_native'):
+                timestamp = timestamp.to_native()
+            
+            entries.append(Entry(
                 id=r["id"],
                 content=r["content"],
                 embedding=r.get("embedding"),
-                timestamp=r["timestamp"],
+                timestamp=timestamp,
                 type=r["type"],
                 project_id=r.get("project_id"),
                 metadata=r.get("metadata", {})
-            )
-            for r in entries_result.records
-        ]
+            ))
+        
         
         # Get entities and relations (using base system methods)
         # For now, get all entities linked to project entries
@@ -631,11 +697,11 @@ class MomentoMemory:
         for entity in entities:
             query = f"""
             MERGE (m:Memory {{name: $name}})
+            ON CREATE SET m.first_seen = datetime()
             SET m.type = $type,
                 m.observations = $observations,
                 m:`{entity.type}`,
                 m.last_updated = datetime()
-            ON CREATE SET m.first_seen = datetime()
             RETURN m
             """
             
