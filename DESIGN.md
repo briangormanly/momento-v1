@@ -98,15 +98,18 @@ Momento Enhanced Memory is an enhanced memory system for AI-assisted software en
 
 ### Relationships
 
-#### Existing
-- `(:Memory)-[:RELATES_TO]->(:Memory)` - Various typed relationships
+#### Existing (from base mcp-neo4j-memory)
+- `(:Memory)-[:<RelationType>]->(:Memory)` - Typed relationships between entities (e.g., `WORKS_AT`, `USES`, `IMPLEMENTED_BY`, etc.)
 
-#### New
-- `(:Entry)-[:EXTRACTED_ENTITY]->(:Memory)` - Links entries to extracted entities
+#### New (Momento enhancements)
+- `(:Entry)-[:AUTHORED_BY]->(:Memory)` - Links entry to its author (a person Memory node)
+- `(:Memory)-[:AUTHORED]->(:Entry)` - Bidirectional link showing what entries an author has written
+- `(:Entry)-[:TAKES_PLACE_AT]->(:Memory)` - Links entry to location entities where the events occurred
+- `(:Entry)-[:PART_OF]->(:Memory)` - Links entry to other entities (people, things, concepts) that are part of the story
+- `(:Memory)-[:MENTIONED_IN]->(:Entry)` - Bidirectional link (which entries mention this entity)
 - `(:Entry)-[:BELONGS_TO]->(:Project)` - Project association
 - `(:Memory)-[:RELEVANT_TO {score: float}]->(:Project)` - Entity relevance to projects
 - `(:Entry)-[:FOLLOWED_BY]->(:Entry)` - Chronological chain
-- `(:Memory)-[:MENTIONED_IN]->(:Entry)` - Which entries mention this entity
 
 ## Architecture
 
@@ -116,11 +119,28 @@ Momento Enhanced Memory is an enhanced memory system for AI-assisted software en
 User Input → Entry Creation
   ├─ Store original text
   ├─ Generate embedding
-  ├─ Extract entities (LLM-based)
-  ├─ Create Memory nodes
-  ├─ Link Entry ↔ Memory
+  ├─ Store author (if provided)
+  ├─ Link to author with AUTHORED_BY relationship
   ├─ Associate with Project
-  └─ Update timestamps and relevance
+  └─ Return Entry ID
+
+Entity Extraction (LLM-based)
+  ├─ Analyze entry content
+  ├─ Extract entities (people, locations, companies, etc.)
+  ├─ Create Memory nodes for entities
+  ├─ Create relationships between Memory nodes
+  └─ Return entity names
+
+Link Entities to Entry
+  ├─ Receive entry_id and entity_names
+  ├─ For each entity:
+  │   ├─ Get entity type from Memory node
+  │   ├─ Determine semantic role:
+  │   │   ├─ Author → AUTHORED_BY (already done)
+  │   │   ├─ Location → TAKES_PLACE_AT
+  │   │   └─ Others → PART_OF
+  │   └─ Create bidirectional MENTIONED_IN
+  └─ Update timestamps
 ```
 
 ### Component Structure
@@ -171,6 +191,45 @@ Bidirectional links between entries and entities:
 - Entity → Mentioned In Entry
 - Full context available for any entity
 
+### 6. Semantic Relationship Tracking
+
+Entry nodes are connected to Memory (entity) nodes using **typed relationships** based on their **semantic role in the story/entry**:
+
+**How it works:**
+- **Authors**: When an author is specified, the system creates `(Entry)-[:AUTHORED_BY]->(Author)` and `(Author)-[:AUTHORED]->(Entry)`
+- **Locations**: Entities of type "location" get `(Entry)-[:TAKES_PLACE_AT]->(Location)` relationships
+- **People & Things**: Other entities (people, things, concepts) get `(Entry)-[:PART_OF]->(Entity)` relationships
+- **Bidirectional Tracing**: All entities also get `(Entity)-[:MENTIONED_IN]->(Entry)` for reverse lookups
+
+**Benefits:**
+- **Story-based queries**: Find entries by author, location, or participants
+- **Semantic graph traversal**: Navigate from entries to entities based on their role in the narrative
+- **Rich context**: Understand not just what entities are mentioned, but their role in the story
+- **Better recall**: Query by relationship type (e.g., "show me all entries that take place at a specific location" or "show me all entries authored by a specific person")
+
+**Example Query Patterns:**
+```cypher
+// Find all entries by a specific author
+MATCH (e:Entry)-[:AUTHORED_BY]->(author:Memory {name: 'Brian Gormanly'})
+RETURN e.content, e.timestamp
+ORDER BY e.timestamp DESC
+
+// Find entries that take place at specific locations
+MATCH (e:Entry)-[:TAKES_PLACE_AT]->(loc:Memory {type: 'location'})
+WHERE loc.name CONTAINS 'Hopewell'
+RETURN e.content, loc.name, e.timestamp
+
+// Find entries involving specific people (not as author)
+MATCH (e:Entry)-[:PART_OF]->(person:Memory {type: 'person', name: 'Yoli'})
+MATCH (e)-[:AUTHORED_BY]->(author:Memory)
+RETURN e.content, author.name, e.timestamp
+
+// Find all entries mentioning a specific entity (any role)
+MATCH (entity:Memory {name: 'Twilight Florist'})-[:MENTIONED_IN]->(e:Entry)
+RETURN e.content, e.timestamp
+ORDER BY e.timestamp
+```
+
 ## MCP Tools
 
 ### Entry Management
@@ -183,6 +242,7 @@ Create a new entry with automatic entity extraction and embedding generation.
 {
   "content": "string",
   "type": "journal|code_comment|meeting|task",
+  "author": "optional_author_name",
   "project_id": "optional_uuid",
   "extract_entities": true,
   "metadata": {}
@@ -190,12 +250,44 @@ Create a new entry with automatic entity extraction and embedding generation.
 ```
 
 **Process:**
-1. Store original entry
+1. Store original entry with content, type, author, timestamp
 2. Generate embedding (using configured model)
-3. Extract entities using LLM (when implemented)
-4. Create Entry node and relationships
+3. Create Entry node in Neo4j
+4. Link to author with AUTHORED_BY if author specified
 5. Link to project if specified
-6. Update Memory nodes with timestamps
+6. Return Entry object with UUID
+
+**Note:** Entity extraction (`extract_entities=true`) is currently a placeholder that returns empty lists. Use the workflow below for actual entity linking.
+
+#### `link_entities_to_entry`
+Link existing Memory nodes to an Entry based on semantic roles.
+
+**Input:**
+```json
+{
+  "entry_id": "uuid_string",
+  "entity_names": ["Entity 1", "Entity 2", ...]
+}
+```
+
+**Process:**
+1. Get entry's author from Entry node
+2. For each entity name:
+   - Fetch Memory node details (type, observations)
+   - Determine semantic relationship:
+     - Author: skip (already linked with AUTHORED_BY)
+     - Location: create TAKES_PLACE_AT
+     - Person/Company/Other: create PART_OF
+   - Create bidirectional MENTIONED_IN
+3. Return success confirmation
+
+**Workflow with Claude:**
+1. User provides story/journal entry
+2. Call `create_entry` with author field
+3. Claude extracts entities and relationships
+4. Call `create_entities` to create Memory nodes
+5. Call `create_relations` for entity-to-entity relationships
+6. Call `link_entities_to_entry` to connect Entry to Memory nodes
 
 #### `search_entries_semantic`
 Search entries by semantic meaning.

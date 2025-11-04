@@ -180,6 +180,79 @@ async def example_4_project_memories():
     print("\n✅ Example 4 complete!")
 
 
+async def example_5_semantic_relationships():
+    """Example 5: Semantic relationship tracking between entries and entities."""
+    print("\n=== Example 5: Semantic Relationship Tracking ===\n")
+    
+    driver = AsyncGraphDatabase.driver(
+        "bolt://localhost:7687",
+        auth=("neo4j", "neo4j_password")
+    )
+    
+    embedding_gen = EmbeddingGenerator()
+    memory = MomentoMemory(driver, embedding_gen)
+    
+    # First, create an entry with entity extraction enabled
+    # In production, this would use an LLM to extract entities and relationships
+    entry = await memory.create_entry(
+        content="Sarah Chen joined TechCorp as a senior engineer. She will be working on the AI platform.",
+        entry_type="journal",
+        project_id="example-001",
+        extract_entities=True  # This would trigger LLM extraction in production
+    )
+    print(f"Created entry: {entry.id}")
+    
+    # For demonstration, manually create entities and relationships
+    # This simulates what an LLM would extract
+    entities = [
+        Entity(name="Sarah Chen", type="person", observations=["Senior engineer"]),
+        Entity(name="TechCorp", type="company", observations=["Tech company"]),
+        Entity(name="AI Platform", type="technology", observations=["Software project"])
+    ]
+    await memory.create_entities(entities)
+    print(f"\nManually created entities (simulating LLM extraction):")
+    for entity in entities:
+        print(f"  - {entity.name} ({entity.type})")
+    
+    # Create relationships between entities
+    relations = [
+        Relation(source="Sarah Chen", target="TechCorp", relationType="WORKS_AT"),
+        Relation(source="Sarah Chen", target="AI Platform", relationType="WORKS_ON")
+    ]
+    await memory.create_relations(relations)
+    print(f"\nCreated relationships between entities:")
+    for rel in relations:
+        print(f"  - {rel.source} --[{rel.relationType}]--> {rel.target}")
+    
+    # Link the entry to entities with semantic relationships
+    # This is what the system does automatically when extract_entities=True
+    for entity in entities:
+        await memory._link_entry_to_entity(entry.id, entity.name)
+    
+    for relation in relations:
+        await memory._link_entry_to_entities_via_relation(entry.id, relation)
+    
+    print(f"\n✨ Semantic relationship tracking created:")
+    print(f"   Entry is now connected to entities with typed relationships:")
+    print(f"   - (Entry)-[:MENTIONS_WORKS_AT {{role: 'source'}}]->(Sarah Chen)")
+    print(f"   - (Entry)-[:MENTIONS_WORKS_AT {{role: 'target'}}]->(TechCorp)")
+    print(f"   - (Entry)-[:MENTIONS_WORKS_ON {{role: 'source'}}]->(Sarah Chen)")
+    print(f"   - (Entry)-[:MENTIONS_WORKS_ON {{role: 'target'}}]->(AI Platform)")
+    
+    print(f"\n🔍 Query examples you can now run in Neo4j Browser:")
+    print(f"   // Find all entries about employment relationships")
+    print(f"   MATCH (e:Entry)-[:MENTIONS_WORKS_AT]->(m:Memory)")
+    print(f"   RETURN e.content, m.name, m.type")
+    print(f"")
+    print(f"   // Find entries about specific people working on technology")
+    print(f"   MATCH (e:Entry)-[:MENTIONS_WORKS_ON]->(person:Memory {{type: 'person'}})")
+    print(f"   MATCH (e)-[:MENTIONS_WORKS_ON]->(tech:Memory {{type: 'technology'}})")
+    print(f"   RETURN e.content, person.name, tech.name")
+    
+    await driver.close()
+    print("\n✅ Example 5 complete!")
+
+
 async def main():
     """Run all examples."""
     print("=" * 70)
@@ -197,6 +270,9 @@ async def main():
         await asyncio.sleep(1)
         
         await example_4_project_memories()
+        await asyncio.sleep(1)
+        
+        await example_5_semantic_relationships()
         
         print("\n" + "=" * 70)
         print("ALL EXAMPLES COMPLETED SUCCESSFULLY!")
@@ -205,6 +281,7 @@ async def main():
         print("1. Check Neo4j browser: http://localhost:7474")
         print("2. Try your own queries")
         print("3. Integrate with Claude Desktop")
+        print("4. Run the Cypher queries from Example 5 to see semantic relationships")
         
     except Exception as e:
         print(f"\n❌ Error: {e}")

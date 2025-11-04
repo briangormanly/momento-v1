@@ -122,6 +122,7 @@ class MomentoMemory:
         self,
         content: str,
         entry_type: str = "journal",
+        author: Optional[str] = None,
         project_id: Optional[str] = None,
         extract_entities: bool = True,
         metadata: Optional[Dict[str, Any]] = None
@@ -131,6 +132,7 @@ class MomentoMemory:
         Args:
             content: Original text content
             entry_type: Type of entry (journal, code_comment, etc.)
+            author: Name of the person who authored this entry
             project_id: Optional project ID
             extract_entities: Whether to extract entities
             metadata: Additional metadata
@@ -138,7 +140,7 @@ class MomentoMemory:
         Returns:
             Entry with extracted entities and relations
         """
-        logger.info(f"Creating entry (type={entry_type}, project={project_id})")
+        logger.info(f"Creating entry (type={entry_type}, author={author}, project={project_id})")
         
         # Generate embedding
         embedding = await self.embedding_generator.generate(content)
@@ -148,53 +150,42 @@ class MomentoMemory:
             content=content,
             embedding=embedding,
             type=entry_type,
+            author=author,
             project_id=project_id,
             metadata=metadata if metadata else None
         )
         
-        # Store entry in database - only set metadata if it's not None/empty
+        # Store entry in database - build params dynamically
+        params = {
+            "id": str(entry.id),
+            "content": entry.content,
+            "embedding": entry.embedding,
+            "timestamp": entry.timestamp.isoformat(),
+            "type": entry.type,
+        }
+        
+        # Build property string for CREATE
+        props = ["id: $id", "content: $content", "embedding: $embedding", 
+                 "timestamp: datetime($timestamp)", "type: $type"]
+        
+        if entry.author:
+            params["author"] = entry.author
+            props.append("author: $author")
+        
+        if entry.project_id:
+            params["project_id"] = entry.project_id
+            props.append("project_id: $project_id")
+        
         if entry.metadata:
-            query = """
-            CREATE (e:Entry {
-                id: $id,
-                content: $content,
-                embedding: $embedding,
-                timestamp: datetime($timestamp),
-                type: $type,
-                project_id: $project_id,
-                metadata: $metadata
-            })
-            RETURN e
-            """
-            params = {
-                "id": str(entry.id),
-                "content": entry.content,
-                "embedding": entry.embedding,
-                "timestamp": entry.timestamp.isoformat(),
-                "type": entry.type,
-                "project_id": entry.project_id,
-                "metadata": entry.metadata
-            }
-        else:
-            query = """
-            CREATE (e:Entry {
-                id: $id,
-                content: $content,
-                embedding: $embedding,
-                timestamp: datetime($timestamp),
-                type: $type,
-                project_id: $project_id
-            })
-            RETURN e
-            """
-            params = {
-                "id": str(entry.id),
-                "content": entry.content,
-                "embedding": entry.embedding,
-                "timestamp": entry.timestamp.isoformat(),
-                "type": entry.type,
-                "project_id": entry.project_id
-            }
+            params["metadata"] = entry.metadata
+            props.append("metadata: $metadata")
+        
+        query = f"""
+        CREATE (e:Entry {{
+            {', '.join(props)}
+        }})
+        RETURN e
+        """
         
         await self.driver.execute_query(
             query,
@@ -206,6 +197,10 @@ class MomentoMemory:
         if project_id:
             await self._link_entry_to_project(entry.id, project_id)
         
+        # Link author if specified
+        if author:
+            await self._link_entry_author(entry.id, author)
+        
         # Extract entities if requested
         entities = []
         relations = []
@@ -215,9 +210,9 @@ class MomentoMemory:
             # In production, this would call Claude or another LLM
             entities, relations = await self._extract_entities_from_entry(entry)
             
-            # Link entry to extracted entities
+            # Link entry to extracted entities based on their semantic role in the entry
             for entity in entities:
-                await self._link_entry_to_entity(entry.id, entity.name)
+                await self._link_entry_to_entity_by_role(entry.id, entity, author)
         
         logger.info(f"Entry created: {entry.id} ({len(entities)} entities, {len(relations)} relations)")
         
@@ -266,19 +261,137 @@ class MomentoMemory:
             routing_control=RoutingControl.WRITE
         )
     
-    async def _link_entry_to_entity(self, entry_id: UUID, entity_name: str):
-        """Link an entry to an extracted entity."""
+    async def _link_entry_author(self, entry_id: UUID, author_name: str):
+        """Link an entry to its author with AUTHORED_BY relationship.
+        
+        Creates or updates a Memory node for the author and links it to the entry.
+        """
         query = """
         MATCH (e:Entry {id: $entry_id})
-        MATCH (m:Memory {name: $entity_name})
-        MERGE (e)-[:EXTRACTED_ENTITY]->(m)
-        MERGE (m)-[:MENTIONED_IN]->(e)
+        MERGE (author:Memory {name: $author_name})
+        ON CREATE SET author.type = 'person',
+                     author.first_seen = datetime(),
+                     author.observations = []
+        SET author.last_updated = datetime()
+        MERGE (e)-[:AUTHORED_BY]->(author)
+        MERGE (author)-[:AUTHORED]->(e)
         """
         await self.driver.execute_query(
             query,
-            {"entry_id": str(entry_id), "entity_name": entity_name},
+            {"entry_id": str(entry_id), "author_name": author_name},
             routing_control=RoutingControl.WRITE
         )
+    
+    async def _link_entry_to_entity_by_role(
+        self, 
+        entry_id: UUID, 
+        entity: Entity,
+        author_name: Optional[str] = None
+    ):
+        """Link an entry to an entity based on its semantic role in the story.
+        
+        Creates appropriate relationships based on entity type and role:
+        - Locations: TAKES_PLACE_AT
+        - People (not author): PART_OF
+        - Things/objects: PART_OF
+        - Author: AUTHORED_BY (handled separately in _link_entry_author)
+        
+        Also creates bidirectional MENTIONED_IN for traceability.
+        """
+        # Determine relationship type based on entity type and role
+        if entity.type == "location":
+            relationship_type = "TAKES_PLACE_AT"
+        elif entity.type == "person" and entity.name != author_name:
+            relationship_type = "PART_OF"
+        elif entity.name == author_name:
+            # Author relationship handled separately, but still create MENTIONED_IN
+            query = """
+            MATCH (e:Entry {id: $entry_id})
+            MATCH (m:Memory {name: $entity_name})
+            MERGE (m)-[:MENTIONED_IN]->(e)
+            """
+            await self.driver.execute_query(
+                query,
+                {"entry_id": str(entry_id), "entity_name": entity.name},
+                routing_control=RoutingControl.WRITE
+            )
+            return
+        else:
+            # Default for other types (technology, company, concept, etc.)
+            relationship_type = "PART_OF"
+        
+        # Create the semantic relationship
+        query = f"""
+        MATCH (e:Entry {{id: $entry_id}})
+        MATCH (m:Memory {{name: $entity_name}})
+        MERGE (e)-[:{relationship_type}]->(m)
+        MERGE (m)-[:MENTIONED_IN]->(e)
+        """
+        
+        await self.driver.execute_query(
+            query,
+            {"entry_id": str(entry_id), "entity_name": entity.name},
+            routing_control=RoutingControl.WRITE
+        )
+    
+    async def link_entities_to_entry(
+        self,
+        entry_id: str,
+        entity_names: List[str],
+        author_name: Optional[str] = None
+    ):
+        """Link existing Memory nodes to an Entry based on semantic roles.
+        
+        This method should be called after entities have been extracted and created
+        to establish the relationships between the Entry and the entities based on
+        their roles in the story.
+        
+        Args:
+            entry_id: UUID of the entry (as string)
+            entity_names: List of entity names to link
+            author_name: Optional author name (from entry.author field)
+        """
+        logger.info(f"Linking {len(entity_names)} entities to entry {entry_id}")
+        
+        # Get the entry's author if not provided
+        if not author_name:
+            query = "MATCH (e:Entry {id: $entry_id}) RETURN e.author as author"
+            result = await self.driver.execute_query(
+                query,
+                {"entry_id": entry_id},
+                routing_control=RoutingControl.READ
+            )
+            if result.records and result.records[0]["author"]:
+                author_name = result.records[0]["author"]
+        
+        # Get entity information for each name
+        for entity_name in entity_names:
+            query = """
+            MATCH (m:Memory {name: $name})
+            RETURN m.name as name, m.type as type, m.observations as observations
+            """
+            result = await self.driver.execute_query(
+                query,
+                {"name": entity_name},
+                routing_control=RoutingControl.READ
+            )
+            
+            if result.records:
+                record = result.records[0]
+                entity = Entity(
+                    name=record["name"],
+                    type=record["type"],
+                    observations=record.get("observations", [])
+                )
+                
+                # Link using semantic role
+                await self._link_entry_to_entity_by_role(
+                    UUID(entry_id),
+                    entity,
+                    author_name
+                )
+        
+        logger.info(f"Successfully linked entities to entry {entry_id}")
     
     async def search_entries_semantic(
         self,

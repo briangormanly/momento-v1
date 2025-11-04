@@ -63,6 +63,7 @@ def create_mcp_server(memory: MomentoMemory) -> FastMCP:
     async def create_entry(
         content: str = Field(..., description="Original text content of the entry"),
         entry_type: str = Field(default="journal", description="Type: journal, code_comment, meeting, task, note"),
+        author: Optional[str] = Field(None, description="Name of the person who authored this entry"),
         project_id: Optional[str] = Field(None, description="ID of associated project"),
         extract_entities: bool = Field(True, description="Whether to extract entities automatically"),
         metadata: Optional[dict] = Field(None, description="Additional metadata")
@@ -76,16 +77,18 @@ def create_mcp_server(memory: MomentoMemory) -> FastMCP:
         {
             "content": "Today I completed the authentication module using JWT tokens",
             "entry_type": "journal",
+            "author": "Brian Gormanly",
             "project_id": "momento-001",
             "extract_entities": true
         }
         """
-        logger.info(f"MCP tool: create_entry (type={entry_type}, project={project_id})")
+        logger.info(f"MCP tool: create_entry (type={entry_type}, author={author}, project={project_id})")
         
         try:
             result = await memory.create_entry(
                 content=content,
                 entry_type=entry_type,
+                author=author,
                 project_id=project_id,
                 extract_entities=extract_entities,
                 metadata=metadata
@@ -165,6 +168,58 @@ def create_mcp_server(memory: MomentoMemory) -> FastMCP:
         except Exception as e:
             logger.error(f"Error searching entries: {e}")
             raise ToolError(f"Error searching entries: {e}")
+    
+    @mcp.tool(
+        name="link_entities_to_entry",
+        annotations=ToolAnnotations(
+            title="Link Entities to Entry",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True
+        )
+    )
+    async def link_entities_to_entry(
+        entry_id: str = Field(..., description="UUID of the entry to link entities to"),
+        entity_names: List[str] = Field(..., description="List of entity names (Memory nodes) to link to the entry")
+    ) -> ToolResult:
+        """Link existing Memory nodes to an Entry based on their semantic roles.
+        
+        Call this after extracting entities from an entry and creating them with create_entities.
+        The system will automatically create appropriate relationships:
+        - AUTHORED_BY for the author (if entry has author field)
+        - TAKES_PLACE_AT for locations
+        - PART_OF for other people, companies, and things
+        - MENTIONED_IN (bidirectional) for all entities
+        
+        Example:
+        {
+            "entry_id": "6594c38e-d1b9-47ae-95f3-7e8773417322",
+            "entity_names": ["Brian Gormanly", "Yoli", "Twilight Florist", "The Juliet"]
+        }
+        """
+        logger.info(f"MCP tool: link_entities_to_entry ({entry_id}, {len(entity_names)} entities)")
+        
+        try:
+            await memory.link_entities_to_entry(
+                entry_id=entry_id,
+                entity_names=entity_names
+            )
+            
+            return ToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=f"Successfully linked {len(entity_names)} entities to entry {entry_id}"
+                )],
+                structured_content={"entry_id": entry_id, "entity_names": entity_names}
+            )
+            
+        except Neo4jError as e:
+            logger.error(f"Neo4j error linking entities: {e}")
+            raise ToolError(f"Neo4j error linking entities: {e}")
+        except Exception as e:
+            logger.error(f"Error linking entities: {e}")
+            raise ToolError(f"Error linking entities: {e}")
     
     @mcp.tool(
         name="get_entry_context",

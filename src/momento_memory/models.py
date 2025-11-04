@@ -107,6 +107,7 @@ class Entry(BaseModel):
         "embedding": [0.123, 0.456, ...],
         "timestamp": "2025-10-31T14:30:00Z",
         "type": "journal",
+        "author": "Brian Gormanly",
         "project_id": "abc-123",
         "metadata": {"mood": "productive"}
     }
@@ -131,6 +132,10 @@ class Entry(BaseModel):
         default="journal",
         description="Type of entry: journal, code_comment, meeting, task, note",
         examples=["journal", "code_comment", "meeting", "task", "note"]
+    )
+    author: Optional[str] = Field(
+        default=None,
+        description="Name of the person who authored this entry"
     )
     project_id: Optional[str] = Field(
         default=None,

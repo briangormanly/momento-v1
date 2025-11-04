@@ -6,6 +6,13 @@ An enhanced memory system for AI-assisted software engineering, built on Neo4j's
 
 Momento Enhanced Memory extends Neo4j's mcp-neo4j-memory with advanced features for preserving context, enabling semantic search, and organizing memories by project. Users can write natural journal entries that are automatically processed to extract entities, generate embeddings, and link to projects—all while preserving the original text for full context tracing.
 
+**Key Enhancements:**
+- **Entry Preservation**: Original text stored with semantic embeddings for similarity search
+- **Semantic Relationship Tracking**: Entry nodes are connected to entities using typed relationships that mirror the relationships between entities (e.g., if extracting `John WORKS_AT Google`, the entry gets `MENTIONS_WORKS_AT` relationships to both John and Google)
+- **Project Context**: Organize and scope memories by project with cross-project relevance
+- **Temporal Tracking**: Chronological organization with timestamp-based queries
+- **Source Tracing**: Bidirectional links between entries and extracted entities
+
 ## Running as MCP Server
 
 ### Quick Start
@@ -234,7 +241,22 @@ memory = MomentoMemory(
 # Create entry
 entry = await memory.create_entry(
     content="Today I completed the authentication module using JWT tokens.",
+    author="Brian Gormanly",
     project_id="my-project"
+)
+
+# Extract entities and link them to the entry
+# (In production, an LLM would extract these automatically)
+entities = [
+    Entity(name="authentication module", type="component", observations=["Uses JWT"]),
+    Entity(name="JWT tokens", type="technology", observations=["Used for auth"])
+]
+await memory.create_entities(entities)
+
+# Link the entities to the entry
+await memory.link_entities_to_entry(
+    entry_id=str(entry.id),
+    entity_names=["authentication module", "JWT tokens"]
 )
 
 # Semantic search
@@ -243,6 +265,18 @@ results = await memory.search_entries_semantic(
     project_id="my-project"
 )
 ```
+
+### MCP Workflow with Claude
+
+When using Momento via MCP with Claude:
+
+1. **Create an entry** with `create_entry` tool (include `author` field)
+2. Claude extracts entities and relationships from the content
+3. **Create entities** with `create_entities` tool
+4. **Create relationships** between entities with `create_relations` tool
+5. **Link entities to entry** with `link_entities_to_entry` tool
+
+This ensures Entry nodes are properly connected to Memory nodes with semantic relationships based on their roles in the story.
 
 ## Documentation
 
